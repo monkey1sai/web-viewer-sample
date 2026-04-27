@@ -93,7 +93,9 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                     ...(StreamConfig.local.mediaPort != null && { mediaPort: StreamConfig.local.mediaPort }),
                     nativeTouchEvents: true,
                     width: 1920,
-                    height: 1080,
+                    // This host's windowed Kit stream currently exposes a 1920x1009 content area.
+                    // Negotiating a taller stream causes frame-size mismatch and no visible video.
+                    height: 1009,
                     fps: 60,
                     onUpdate: (message: StreamEvent) => this._onUpdate(message),
                     onStart: (message: StreamEvent) => this._onStart(message),
