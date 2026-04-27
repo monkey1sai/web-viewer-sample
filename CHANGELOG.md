@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- `AppStream.tsx` (`local` source): removed hardcoded `width` / `height` / `fps`. The streaming library defaults (1920×1080@60) now apply, matching the server's `.kit` `renderer.resolution`.
+- Added `onStreamStats` handler that calls `AppStreamer.resize()` when the server-reported `streamingResolutionWidth/Height` differs from the currently negotiated size. Client and server now converge dynamically on the encoder's actual output instead of relying on a hand-tuned per-host constant.
+
+### Fixed
+- WebRTC `FrameGrabFailed` / `Cannot stream video frame with resolution X that differs from Y` caused by the client requesting a host-specific stale height (e.g. 1009/1062). With the dynamic negotiation, end-to-end testing against `bim-streaming-server` launched in headless mode (`--no-window`) delivers a stable 1920×1080 stream with 0 corrupted frames.
+
 ## [1.5.2] - 2025-08-12
 
 ### Fixed

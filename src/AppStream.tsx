@@ -11,7 +11,7 @@
  */
 import React, { Component } from 'react';
 import PropTypes from 'prop-types';
-import { AppStreamer, StreamEvent, StreamProps, DirectConfig, GFNConfig, StreamType } from '@nvidia/omniverse-webrtc-streaming-library';
+import { AppStreamer, StreamEvent, StreamProps, DirectConfig, GFNConfig, StreamStats, StreamType } from '@nvidia/omniverse-webrtc-streaming-library';
 import StreamConfig from '../stream.config.json';
 
 
@@ -38,6 +38,7 @@ interface AppStreamState {
 
 export default class AppStream extends Component<AppStreamProps, AppStreamState> {
     private _requested: boolean;
+    private _negotiatedSize: { w: number; h: number } | null;
 
     static defaultProps = {
         style: {}
@@ -53,6 +54,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         super(props);
 
         this._requested = false;
+        this._negotiatedSize = null;
         this.state = {
             streamReady: false
         };
@@ -92,13 +94,14 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                     mediaServer: StreamConfig.local.server,
                     ...(StreamConfig.local.mediaPort != null && { mediaPort: StreamConfig.local.mediaPort }),
                     nativeTouchEvents: true,
-                    width: 1920,
-                    // This host's windowed Kit stream currently exposes a 1920x1009 content area.
-                    // Negotiating a taller stream causes frame-size mismatch and no visible video.
-                    height: 1009,
-                    fps: 60,
+                    // No hardcoded width/height/fps — library defaults (1920x1080/60) match the
+                    // server's renderer.resolution in the .kit file. The server's actual encoded
+                    // size may differ (e.g. 1920x1008 in headless mode) due to streaming-layer
+                    // internals; onStreamStats below detects that and calls AppStreamer.resize()
+                    // so client and server converge on whatever size the encoder actually delivers.
                     onUpdate: (message: StreamEvent) => this._onUpdate(message),
                     onStart: (message: StreamEvent) => this._onStart(message),
+                    onStreamStats: (message: StreamEvent) => this._onStreamStats(message),
                     onCustomEvent: (message: any) => this._onCustomEvent(message),
                     onStop: (message: StreamEvent) => { console.log(message) },
                     onTerminate: (message: StreamEvent) => { console.log(message) }
@@ -203,6 +206,17 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
 
     _onCustomEvent(message: any) {
         this.props.handleCustomEvent(message);
+    }
+
+    _onStreamStats(message: any) {
+        const stats: StreamStats | undefined = message?.stats;
+        if (!stats) return;
+        const w = stats.streamingResolutionWidth;
+        const h = stats.streamingResolutionHeight;
+        if (!w || !h) return;
+        if (this._negotiatedSize && this._negotiatedSize.w === w && this._negotiatedSize.h === h) return;
+        this._negotiatedSize = { w, h };
+        AppStreamer.resize(w, h).catch((err: unknown) => console.warn('AppStreamer.resize failed', err));
     }
 
     _onStop(message: any) {
