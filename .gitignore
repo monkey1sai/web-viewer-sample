@@ -27,3 +27,8 @@ yalc.lock
 *.sln
 *.sw?
 .gitnexus
+
+# Local agent artifacts
+/.claude/
+/AGENTS.md
+/CLAUDE.md
