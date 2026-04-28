@@ -74,6 +74,7 @@ export default class App extends React.Component<AppProps, AppState> {
         [
             {name: "Sample 1", url:"./samples/stage01.usd"},
             {name: "Sample 2", url:"./samples/stage02.usd"},
+            {name: "BIM: 許良宇圖書館建築 2026", url:"C:/Repos/active/iot/AI-BIM-governance/bim-streaming-server/bim-models/許良宇圖書館建築_2026.usdc"},
         ];
 
         this.state = {
