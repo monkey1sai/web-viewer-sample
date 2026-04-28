@@ -16,12 +16,8 @@ import StreamConfig from '../stream.config.json';
 import USDAsset from "./USDAsset";
 import USDStage from "./USDStage";
 import { headerHeight } from './App';
+import { fetchUSDAssets, type USDAsset as USDAssetType } from './assetsApi';
 
-
-interface USDAssetType {
-    name: string;
-    url: string;
-}
 
 interface USDPrimType {
     name?: string;
@@ -42,7 +38,7 @@ export interface AppProps {
 
 interface AppState {
     usdAssets: USDAssetType[];
-    selectedUSDAsset: USDAssetType;
+    selectedUSDAsset: USDAssetType | null;
     usdPrims: USDPrimType[];
     selectedUSDPrims: Set<USDPrimType>;
     isKitReady: boolean;
@@ -54,7 +50,23 @@ interface AppState {
 
 interface AppStreamMessageType {
     event_type: string;
-    payload: any;
+    payload: unknown;
+}
+
+interface AppStreamEventType {
+    event_type?: string;
+    messageRecipient?: string;
+    data?: string;
+    payload?: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+function getPayloadString(payload: Record<string, unknown>, key: string): string {
+    const value = payload[key];
+    return typeof value === "string" ? value : "";
 }
 
 export default class App extends React.Component<AppProps, AppState> {
@@ -64,29 +76,52 @@ export default class App extends React.Component<AppProps, AppState> {
     
     constructor(props: AppProps) {
         super(props);
-        
-        // list of selectable USD assets
-        const usdAssets: USDAssetType[] = StreamConfig.source === "stream"? [
-            {name: "Sample 1", url:"${omni.usd_viewer.samples}/samples_data/stage01.usd"},
-            {name: "Sample 2", url:"${omni.usd_viewer.samples}/samples_data/stage02.usd"},
-        ]
-        :
-        [
-            {name: "Sample 1", url:"./samples/stage01.usd"},
-            {name: "Sample 2", url:"./samples/stage02.usd"},
-            {name: "BIM: 許良宇圖書館建築 2026", url:"C:/Repos/active/iot/AI-BIM-governance/bim-streaming-server/bim-models/許良宇圖書館建築_2026.usdc"},
-        ];
 
         this.state = {
-            usdAssets: usdAssets,
-            selectedUSDAsset: usdAssets[0],
+            usdAssets: [],
+            selectedUSDAsset: null,
             usdPrims: [],
             selectedUSDPrims: new Set<USDPrimType>(),
             isKitReady: false,
             showStream: false,
             showUI: false,
-            loadingText: StreamConfig.source === "gfn" ? "Log in to GeForce NOW to view stream" : (StreamConfig.source === "stream" ? "Waiting for stream to initialize":  "Waiting for stream to begin"),
-            isLoading: StreamConfig.source === "stream" ? true : false
+            loadingText: "Loading asset list...",
+            isLoading: true
+        }
+    }
+
+    componentDidMount(): void {
+        void this._loadUSDAssets();
+    }
+
+    private _getReadyLoadingText(): string {
+        return StreamConfig.source === "gfn" ? "Log in to GeForce NOW to view stream" : (StreamConfig.source === "stream" ? "Waiting for stream to initialize":  "Waiting for stream to begin");
+    }
+
+    private async _loadUSDAssets(): Promise<void> {
+        try {
+            const usdAssets = await fetchUSDAssets();
+            const selectedUSDAsset = usdAssets[0] ?? null;
+
+            this.setState({
+                usdAssets,
+                selectedUSDAsset,
+                loadingText: selectedUSDAsset ? this._getReadyLoadingText() : "No USD assets available",
+                isLoading: selectedUSDAsset ? StreamConfig.source === "stream" : false,
+            }, () => {
+                if (this.state.isKitReady && this.state.selectedUSDAsset && !this.state.showStream) {
+                    this._openSelectedAsset();
+                }
+            });
+        }
+        catch (error) {
+            console.error("Unable to load USD assets.", error);
+            this.setState({
+                usdAssets: [],
+                selectedUSDAsset: null,
+                loadingText: "Unable to load asset list",
+                isLoading: false,
+            });
         }
     }
 
@@ -169,6 +204,12 @@ export default class App extends React.Component<AppProps, AppState> {
     * Send a request to load an asset based on the currently selected asset
     */
     private _openSelectedAsset(): void {
+        if (!this.state.selectedUSDAsset) {
+            console.warn("No USD asset is selected.");
+            this.setState({ loadingText: "No USD assets available", isLoading: false });
+            return;
+        }
+
         this.setState({ loadingText: "Loading Asset...", showStream: false, isLoading: true })
         this.setState({ usdPrims: [], selectedUSDPrims: new Set<USDPrimType>() });
         this.usdStageRef.current?.resetExpandedIds();
@@ -315,18 +356,20 @@ export default class App extends React.Component<AppProps, AppState> {
     *
     * Handle message from stream.
     */
-    private _handleCustomEvent (event: any): void {
+    private _handleCustomEvent (event: AppStreamEventType | null): void {
         if (!event) {
             return;
         }
 
+        const payload = isRecord(event.payload) ? event.payload : {};
+
         // response received once a USD asset is fully loaded
         if (event.event_type === "openedStageResult") {
-            if (event.payload.result === "success") {
+            if (payload.result === "success") {
                 this._queryLoadingState() 
             }
             else {
-                console.error('Kit App communicates there was an error loading: ' + event.payload.url);
+                console.error('Kit App communicates there was an error loading: ' + getPayloadString(payload, "url"));
             }
         }
         
@@ -343,7 +386,9 @@ export default class App extends React.Component<AppProps, AppState> {
             }
             
             else {
-                const usdAsset: USDAssetType = this._getAsset(event.payload.url)
+                const payloadUrl = getPayloadString(payload, "url");
+                const loadingState = getPayloadString(payload, "loading_state");
+                const usdAsset: USDAssetType = this._getAsset(payloadUrl)
                 const isStageValid: boolean = !!(usdAsset.name && usdAsset.url)
                 
                 // set the USD Asset dropdown to the currently opened stage if it doesn't match
@@ -351,17 +396,17 @@ export default class App extends React.Component<AppProps, AppState> {
                     this.setState({ selectedUSDAsset: usdAsset })
 
                 // if the stage is empty, force-load the selected usd asset; the loading state is irrelevant
-                if (!event.payload.url)
+                if (!payloadUrl)
                     this._openSelectedAsset()
                 
                 // if a stage has been fully loaded and isn't a part of this application, force-load the selected stage
-                else if (!isStageValid && event.payload.loading_state === "idle"){
-                    console.log(`The loaded asset ${event.payload.url} is invalid.`)
+                else if (!isStageValid && loadingState === "idle"){
+                    console.log(`The loaded asset ${payloadUrl} is invalid.`)
                     this._openSelectedAsset()
                 }
                 
                 // show stream and populate children if the stage is valid and it's done loading
-                if (isStageValid && event.payload.loading_state === "idle")
+                if (isStageValid && loadingState === "idle")
                 {
                     this._getChildren()
                     this.setState({ showStream: true, loadingText: "Asset loaded", showUI: true, isLoading: false })
@@ -383,15 +428,19 @@ export default class App extends React.Component<AppProps, AppState> {
             
         // Notification from Kit about user changing the selection via the viewport.
         else if (event.event_type === "stageSelectionChanged") {
-            console.log(event.payload.prims.constructor.name);
-            if (!Array.isArray(event.payload.prims) || event.payload.prims.length === 0) {
+            const prims = Array.isArray(payload.prims)
+                ? payload.prims.filter((prim): prim is string => typeof prim === "string")
+                : [];
+
+            console.log(prims.constructor.name);
+            if (prims.length === 0) {
                 console.log('Kit App communicates an empty stage selection.');
                 this.setState({ selectedUSDPrims: new Set<USDPrimType>() });
             }
             else {
-                console.log('Kit App communicates selection of a USDPrimType: ' + event.payload.prims.map((obj: any) => obj).join(', '));
+                console.log('Kit App communicates selection of a USDPrimType: ' + prims.join(', '));
                 const usdPrimsToSelect: Set<USDPrimType> = new Set<USDPrimType>();
-                event.payload.prims.forEach((obj: any) => {
+                prims.forEach((obj) => {
                     const result = this._findUSDPrimByPath(obj);
                     if (result !== null) {
                         usdPrimsToSelect.add(result);
@@ -403,8 +452,8 @@ export default class App extends React.Component<AppProps, AppState> {
         // Streamed app provides children of a parent USDPrimType
         else if (event.event_type === "getChildrenResponse") {
             console.log('Kit App sent stage prims');
-            const prim_path = event.payload.prim_path;
-            const children = event.payload.children;
+            const prim_path = getPayloadString(payload, "prim_path");
+            const children = Array.isArray(payload.children) ? payload.children as USDPrimType[] : [];
             const usdPrim = this._findUSDPrimByPath(prim_path);
             if (usdPrim === null) {
                 this.setState({ usdPrims: children });
